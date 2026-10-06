@@ -1,145 +1,116 @@
 # Deployment guide
 
-The repository builds into **one container** that serves both the FastAPI API
-and the compiled React frontend on a single origin. No CORS configuration, no
-second service, no separate frontend host.
+The repository builds into **one container** serving both the FastAPI API and
+the compiled React frontend on a single origin. No CORS setup, no second
+service, no separate frontend host.
 
 ---
 
-## Which free host should I use?
+## Why Render, and why not Hugging Face
 
-The deciding constraint is memory. TensorFlow plus the FaceNet weights need
-roughly **1 GB resident**.
+The deciding constraint used to be memory: TensorFlow plus the FaceNet weights
+need roughly **1 GB resident**, and free tiers give 512 MB.
 
-| Host | Free RAM | All four features? | Notes |
+That constraint is gone. FaceNet now runs on **ONNX Runtime** instead of
+TensorFlow — the same model graph, exported to ONNX at float16 — so the whole
+service peaks around **265 MB**. It fits a free 512 MB instance with headroom.
+
+| Host | Free RAM | Card required | All features? |
 |---|---|---|---|
-| **Hugging Face Spaces** | **16 GB** | **Yes** | Docker SDK, no card required. **Recommended.** |
-| Render | 512 MB | No — classical modes only | Deep models are OOM-killed on free. Needs the 2 GB `standard` plan. |
-| Railway | ~512 MB trial | No | Trial credit expires. |
-| Fly.io | 256 MB default | No | Needs a paid, larger VM. |
+| **Render** | 512 MB | **No** | **Yes** ✅ |
+| Hugging Face Spaces | 16 GB | — | Docker/Gradio are **PRO-only since 2026** ❌ |
+| Koyeb | — | Yes, since Feb 2026 | — |
+| Fly.io / Railway / Cloud Run | varies | Yes | — |
 
-**Use Hugging Face Spaces.** It is the only free tier that runs detection,
-template matching *and* FaceNet recognition without compromise.
+**Use Render.** It is free, needs no credit card, and runs every feature.
 
 ---
 
-## Option A — Hugging Face Spaces (recommended)
+## Deploy to Render
 
 ### 1. Push to GitHub
 
 ```bash
-git init
-git add .
-git commit -m "FaceVision Studio"
-git branch -M main
-git remote add origin https://github.com/<you>/facevision-studio.git
+git remote add origin https://github.com/<you>/facevision_studio.git
 git push -u origin main
 ```
 
-### 2. Create the Space
+On the password prompt, paste a **Personal Access Token** from
+<https://github.com/settings/tokens> (scope: `repo`), not your account password.
 
-Go to <https://huggingface.co/new-space>:
+### 2. Create the service
 
-- **Space SDK**: `Docker` → `Blank`
-- **Hardware**: `CPU basic` (free)
-- **Visibility**: Public
+1. Sign up at <https://render.com> (GitHub login works; no card needed).
+2. **New** → **Blueprint**.
+3. Connect your GitHub account and pick the `facevision_studio` repo.
+4. Render reads [`render.yaml`](render.yaml) and configures everything itself.
+5. Click **Apply**.
 
-### 3. Push the code to the Space
+> Prefer doing it manually? **New → Web Service** → pick the repo → set
+> **Runtime: Docker**, **Plan: Free**, **Health check path: `/api/health`**.
 
-The Space is its own git repository. Add it as a second remote:
+### 3. Wait for the build
+
+First build takes roughly **4–7 minutes**. There is no TensorFlow to download
+and the models are committed to the repo, so nothing is fetched at runtime.
+
+When the status turns **Live**, your app is at:
+
+```
+https://facevision-studio.onrender.com
+```
+
+(Render appends a suffix if the name is taken.)
+
+### 4. Updating
 
 ```bash
-git remote add space https://huggingface.co/spaces/<you>/facevision-studio
-git push space main
+git add -A && git commit -m "your change" && git push
 ```
 
-When prompted for a password, use a **write token** from
-<https://huggingface.co/settings/tokens>.
-
-> The `README.md` front matter (`sdk: docker`, `app_port: 7860`) is what tells
-> the Space how to run. Keep it at the top of the file.
-
-### 4. Automate it (optional)
-
-`.github/workflows/sync-to-hf-space.yml` mirrors GitHub to the Space on every
-push to `main`, so afterwards `git push origin main` is the only command you
-need. Configure it once in **Settings → Secrets and variables → Actions**:
-
-| Kind | Name | Value |
-|---|---|---|
-| Secret | `HF_TOKEN` | a Hugging Face **write** token |
-| Variable | `HF_SPACE` | `<you>/facevision-studio` |
-
-### 5. First build
-
-The first build takes roughly 6–10 minutes (TensorFlow is a large wheel). The
-build also pre-downloads YuNet, SSD and FaceNet weights, so the first request
-is fast rather than hanging on a download.
-
-To include RetinaFace in the image (adds ~118 MB), set a build argument in the
-Space settings or change the Dockerfile default:
-
-```dockerfile
-ARG PREFETCH_RETINAFACE=1
-```
-
-Otherwise RetinaFace is downloaded on first use, which is still supported.
+`autoDeploy: true` in `render.yaml` means Render rebuilds on every push to
+`main`.
 
 ---
 
-## Option B — Render
+## Free-tier behaviour you should expect
 
-`render.yaml` is a ready blueprint, but note the memory ceiling.
+- **Sleeps after 15 minutes** with no traffic, and takes **~50 seconds** to wake
+  on the next request. The first visitor after a quiet period waits; everyone
+  after that does not.
+- **750 instance-hours per month**, enough for one service running continuously
+  (a month is ~744 hours).
+- Shared, fractional CPU. `ONNX_THREADS=1` is set deliberately — more threads on
+  a fractional core makes things slower, not faster.
 
-**Free tier** — ships with `DEEP_MODELS_ENABLED=0`. Viola–Jones detection and
-template matching work completely; the two deep modes are reported as
-unavailable in the UI rather than crashing. This is a deliberate, honest
-degradation.
-
-**Full features** — edit `render.yaml`:
-
-```yaml
-plan: standard          # 2 GB RAM
-envVars:
-  - key: DEEP_MODELS_ENABLED
-    value: 1
-```
-
-Then: New → Blueprint → connect the repo. Render reads `render.yaml`
-automatically.
-
-Free instances sleep after 15 minutes idle and take ~50 seconds to wake.
+If the wake delay matters, Render's paid Starter plan removes it.
 
 ---
 
-## Option C — Any Docker host
+## Any other Docker host
 
 ```bash
 docker build -t facevision-studio .
-docker run -p 7860:7860 facevision-studio
+docker run -p 10000:10000 facevision-studio
 ```
 
-Open <http://localhost:7860>.
-
-Build with RetinaFace baked in:
-
-```bash
-docker build --build-arg PREFETCH_RETINAFACE=1 -t facevision-studio .
-```
+Open <http://localhost:10000>.
 
 ---
 
 ## Environment variables
 
-Every setting has a working default; see `.env.example`.
+Every setting has a working default; see [`.env.example`](.env.example).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PORT` | `7860` | Bind port |
+| `PORT` | `10000` | Bind port |
 | `ALLOWED_ORIGINS` | `*` | Only needed for a split-origin deployment |
-| `DETECTOR_BACKEND` | `yunet` | `yunet`, `ssd` or `retinaface` |
-| `DEEP_MODELS_ENABLED` | `1` | `0` runs classical-CV only, no TensorFlow |
+| `DETECTOR_BACKEND` | `yunet` | `yunet` or `retinaface` |
+| `ENABLE_RETINAFACE` | `0` | `1` enables the optional TensorFlow backend |
+| `DEEP_MODELS_ENABLED` | `1` | `0` runs classical CV only, loads no weights |
 | `WARM_UP_ON_STARTUP` | `1` | Load models in the background at boot |
+| `ONNX_THREADS` | `1` | Raise on a host with real dedicated cores |
 | `RECOGNITION_THRESHOLD` | `0.60` | Cosine similarity needed to claim an identity |
 | `TEMPLATE_MIN_SCORE` | `0.60` | Correlation floor for a template match |
 | `MAX_IMAGE_DIM` | `1600` | Inputs are fitted inside this box first |
@@ -148,32 +119,38 @@ Every setting has a working default; see `.env.example`.
 
 ---
 
-## Detector backends
+## Models
 
-Measured on the bundled 820×400 sample, warm, 2 vCPU:
+Both model files are committed, so builds are reproducible and cold starts
+never wait on a download.
 
-| Backend | Time/image | Weights | Faces found |
-|---|---|---|---|
-| `yunet` | **~15 ms** | 233 KB | 2 |
-| `ssd` | ~35 ms | 10.7 MB | 2 |
-| `retinaface` | ~14.5 s | 118 MB | 2 |
+| File | Size | Purpose |
+|---|---|---|
+| `backend/models/facenet.onnx` | ~44 MB | FaceNet 128-d embeddings, float16 |
+| `backend/models/yunet.onnx` | ~228 KB | Face detection |
 
-All three locate the same faces on this sample and produce the same FaceNet
-identification. RetinaFace has higher recall on hard poses and heavy occlusion,
-which is why it stays available — but it is roughly a thousand times slower on
-CPU, so **YuNet is the default**. The picker in the UI lets anyone compare them
-directly.
+`facenet.onnx` is DeepFace's own FaceNet graph converted with `tf2onnx` and
+quantised to float16. Embeddings were verified against the TensorFlow original
+on every bundled reference image — cosine agreement **0.9999977 or better**.
 
----
+Verify them on any machine or deployment:
 
-## Persisting the gallery
+```bash
+python backend/scripts/verify_models.py
+```
 
-Enrolled identities live as folders of images under `backend/gallery/`. They are
-baked into the image, so a redeploy restores exactly what is in git.
+### The optional RetinaFace backend
 
-To let people enrol without a rebuild, mount a volume and point `GALLERY_DIR` at
-it. Embeddings are cached in `.embeddings.json` beside the images and recomputed
-only when a file's size or mtime changes.
+RetinaFace needs TensorFlow (~1 GB resident) and takes ~14.5 s per image on
+CPU, so it is excluded from the deployed image. For local comparison:
+
+```bash
+pip install -r backend/requirements-retinaface.txt
+ENABLE_RETINAFACE=1 python -m uvicorn backend.app.main:app --port 8000
+```
+
+It then appears as a selectable backend in the UI. Without it, the dropdown
+shows it as *not installed* rather than failing at request time.
 
 ---
 
@@ -181,11 +158,22 @@ only when a file's size or mtime changes.
 
 | Path | Use |
 |---|---|
-| `/api/health` | Liveness. Never touches TensorFlow, answers immediately even while models load. |
-| `/api/status` | Readiness detail: which models are loaded, gallery contents, thresholds. |
+| `/api/health` | Liveness. Never loads models; answers immediately. |
+| `/api/status` | Readiness detail: models loaded, gallery, thresholds. |
 
-Point your platform's health check at `/api/health`. Using `/api/status` or `/`
-would make the service look down during the model warm-up.
+Point the platform's health check at `/api/health`. `/api/status` or `/` would
+make the service look down during warm-up.
+
+---
+
+## Persisting the gallery
+
+Enrolled identities are folders of images under `backend/gallery/`, baked into
+the image, so a redeploy restores exactly what is in git.
+
+To let people enrol without a rebuild, mount a disk and point `GALLERY_DIR` at
+it. Embeddings cache in `.embeddings.json` beside the images and recompute only
+when a file's size or mtime changes.
 
 ---
 
@@ -193,17 +181,17 @@ would make the service look down during the model warm-up.
 
 **Build fails on `npm ci`** — `frontend/package-lock.json` must be committed.
 
-**`ImportError: libGL.so.1`** — the runtime image needs `libgl1` and
-`libglib2.0-0`. Both are installed in the Dockerfile; they are required because
-DeepFace depends on `opencv-python` rather than the headless build.
+**`FaceNet model missing`** — `backend/models/facenet.onnx` was not committed.
+Check it is not caught by `.gitignore` (the ignore rules deliberately allow
+`backend/models/*.onnx`).
 
-**Container is killed during startup** — out of memory. Either raise the
-instance size or set `DEEP_MODELS_ENABLED=0`.
+**Service killed during startup** — out of memory. Confirm `ONNX_THREADS=1` and
+that `ENABLE_RETINAFACE` is `0`; enabling RetinaFace pulls in TensorFlow and
+will not fit 512 MB.
 
-**First deep request is slow** — weights are loading. `/api/status` reports
-`warming_up: true` and the UI shows a banner. Baking weights in at build time
-(the default) avoids the download portion.
+**First request after idle is slow** — the free instance was asleep. Expect
+~50 seconds, once.
 
-**`UnicodeEncodeError` running locally on Windows** — DeepFace's logger prints
-emoji that the cp1252 console cannot encode. Run with `PYTHONUTF8=1`, or use the
-`run-dev` scripts which set it for you. Linux containers are unaffected.
+**`UnicodeEncodeError` locally on Windows** — only affects the optional
+RetinaFace extras, whose logger prints emoji the cp1252 console cannot encode.
+Run with `PYTHONUTF8=1` or use the `run-dev` scripts.

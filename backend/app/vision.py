@@ -1,8 +1,7 @@
 """Detection, recognition and template-matching primitives.
 
-Deep models are imported lazily and guarded by a lock: TensorFlow model
-construction is not safe to run concurrently, and importing it eagerly would
-delay startup past most platforms' health-check window.
+Model loading lives in engines.py (ONNX Runtime + OpenCV, no TensorFlow).
+This module holds the geometry, the classical algorithms and the gallery.
 """
 
 from __future__ import annotations
@@ -16,71 +15,34 @@ import cv2
 import numpy as np
 
 from . import config
+from .engines import (
+    ModelUnavailable,
+    detect_retinaface,
+    detect_yunet,
+    face_embedding,
+    facenet_available,
+    facenet_error,
+    model_report,
+    retinaface_available,
+)
 
 log = logging.getLogger("facevision.vision")
 
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
-
-class DeepModelsUnavailable(RuntimeError):
-    """Raised when the TensorFlow stack cannot be used for this request."""
-
-
-# --- Lazy, serialized access to DeepFace -------------------------------------
-
-_deepface_lock = threading.Lock()
-_deepface_module = None
-_deepface_error: str | None = None
-
-
-def _deepface():
-    """Import DeepFace once, caching both success and failure."""
-    global _deepface_module, _deepface_error
-
-    if _deepface_module is not None:
-        return _deepface_module
-    if _deepface_error is not None:
-        raise DeepModelsUnavailable(_deepface_error)
-    if not config.DEEP_MODELS_ENABLED:
-        _deepface_error = "Deep models are disabled (DEEP_MODELS_ENABLED=0)."
-        raise DeepModelsUnavailable(_deepface_error)
-
-    with _deepface_lock:
-        if _deepface_module is not None:
-            return _deepface_module
-        if _deepface_error is not None:
-            raise DeepModelsUnavailable(_deepface_error)
-        try:
-            log.info("Importing DeepFace / TensorFlow (first use)...")
-            from deepface import DeepFace  # noqa: PLC0415 - intentionally deferred
-
-            _deepface_module = DeepFace
-            log.info("DeepFace ready.")
-            return _deepface_module
-        except Exception as exc:  # pragma: no cover - environment dependent
-            _deepface_error = f"DeepFace/TensorFlow could not be loaded: {exc}"
-            log.warning(_deepface_error)
-            raise DeepModelsUnavailable(_deepface_error) from exc
+# Kept as an alias so existing callers and error handlers stay valid.
+DeepModelsUnavailable = ModelUnavailable
 
 
 def deep_models_available() -> bool:
-    """Whether deep detection/recognition can serve a request right now."""
+    """Whether detection + recognition can serve a request right now."""
     if not config.DEEP_MODELS_ENABLED:
         return False
-    try:
-        _deepface()
-        return True
-    except DeepModelsUnavailable:
-        return False
+    return facenet_available()
 
 
 def deep_models_error() -> str | None:
-    return _deepface_error
-
-
-# TensorFlow graph building and the Keras model registry are not thread-safe,
-# and parallel inference would multiply peak memory on a small container.
-_inference_lock = threading.Lock()
+    return facenet_error()
 
 
 # --- Haar cascades -----------------------------------------------------------
@@ -227,7 +189,7 @@ def detect_viola_jones(image: np.ndarray):
 
 
 def detect_deep(image: np.ndarray, backend: str | None = None):
-    """Deep face detection via DeepFace.
+    """Deep face detection.
 
     ``backend`` is one of config.DETECTOR_BACKENDS. Returns
     ``(boxes, backend_actually_used)``; on any failure it degrades to the
@@ -237,58 +199,22 @@ def detect_deep(image: np.ndarray, backend: str | None = None):
     if backend not in config.DETECTOR_BACKENDS:
         backend = config.DETECTOR_BACKEND
 
-    try:
-        deepface = _deepface()
-    except DeepModelsUnavailable:
-        return detect_viola_jones(image), "viola-jones"
+    if backend == "retinaface" and not retinaface_available():
+        log.info("RetinaFace unavailable; using YuNet instead.")
+        backend = "yunet"
 
     try:
-        with _inference_lock:
-            faces = deepface.extract_faces(
-                img_path=image,
-                detector_backend=backend,
-                enforce_detection=False,
-                align=True,
-            )
+        boxes = detect_retinaface(image) if backend == "retinaface" else detect_yunet(image)
+        return boxes, backend
+    except ModelUnavailable as exc:
+        log.warning("%s unavailable, using Viola-Jones: %s", backend, exc)
+        return detect_viola_jones(image), "viola-jones"
     except Exception as exc:
         log.warning("%s failed, using Viola-Jones: %s", backend, exc)
         return detect_viola_jones(image), "viola-jones"
 
-    boxes = []
-    for item in faces:
-        area = item.get("facial_area") or {}
-        w = int(area.get("w", 0))
-        h = int(area.get("h", 0))
-        confidence = float(item.get("confidence", 0.0))
-        if w <= 0 or h <= 0 or confidence < config.DETECTION_MIN_CONFIDENCE:
-            continue
-        # DeepFace reports the whole frame when the detector finds nothing.
-        if w >= image.shape[1] * 0.99 and h >= image.shape[0] * 0.99:
-            continue
-        boxes.append(clamp_box((area.get("x", 0), area.get("y", 0), w, h), image.shape))
-
-    return boxes, backend
-
 
 # --- FaceNet embeddings ------------------------------------------------------
-
-
-def face_embedding(face: np.ndarray) -> np.ndarray:
-    deepface = _deepface()
-    if face.size == 0:
-        raise ValueError("Empty face crop.")
-    with _inference_lock:
-        reps = deepface.represent(
-            img_path=face,
-            model_name="Facenet",
-            detector_backend="skip",
-            enforce_detection=False,
-            align=False,
-            normalization="base",
-        )
-    if not reps:
-        raise RuntimeError("FaceNet returned no embedding.")
-    return np.asarray(reps[0]["embedding"], dtype=np.float32)
 
 
 def reference_face(image: np.ndarray) -> np.ndarray:
@@ -311,7 +237,7 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 # --- Gallery -----------------------------------------------------------------
 
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 _gallery_lock = threading.Lock()
 
 
@@ -432,17 +358,17 @@ def warm_up() -> dict:
     """Load models and pre-compute gallery embeddings. Safe to call twice."""
     status = {"deep_models": False, "people": [], "error": None}
     try:
-        _deepface()
-        status["deep_models"] = True
-        # A tiny synthetic face exercises both model loads.
-        probe = np.full((160, 160, 3), 127, dtype=np.uint8)
-        face_embedding(probe)
-        gallery_embeddings()
-    except DeepModelsUnavailable as exc:
+        if config.DEEP_MODELS_ENABLED:
+            # A synthetic face exercises the FaceNet graph load.
+            face_embedding(np.full((160, 160, 3), 127, dtype=np.uint8))
+            status["deep_models"] = True
+            gallery_embeddings()
+    except ModelUnavailable as exc:
         status["error"] = str(exc)
     except Exception as exc:  # pragma: no cover
         status["error"] = f"Warm-up incomplete: {exc}"
     status["people"] = list_gallery()
+    status["models"] = model_report()
     return status
 
 

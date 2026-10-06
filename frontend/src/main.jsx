@@ -23,9 +23,9 @@ const MECHANISMS = [
     needsDeep: true,
     text: "A modern deep detector locates multiple faces and estimates facial landmarks, handling scale and pose far better than a classical cascade.",
     detail:
-      "Three backends are selectable. YuNet is a 233 KB OpenCV detector that returns in milliseconds and is the default. SSD ResNet-10 is a 10.7 MB OpenCV DNN model. RetinaFace has the highest recall on hard poses but is a 118 MB network that takes roughly 15 seconds per image on a free CPU container — measured on this project's sample photograph, where all three found the same faces.",
-    strength: "Accurate across scale and pose",
-    limitation: "RetinaFace is far slower than the alternatives"
+      "YuNet is a 228 KB detector that runs through OpenCV's ONNX runtime and returns in milliseconds; it is the default and needs no TensorFlow. RetinaFace has higher recall on hard poses, but it is a 118 MB TensorFlow network that takes roughly 15 seconds per image on CPU, so it is an optional local extra rather than part of the deployed build. On this project's sample photograph both find the same faces and yield the same identification.",
+    strength: "Accurate across scale and pose, milliseconds per image",
+    limitation: "RetinaFace needs TensorFlow and is ~1000x slower"
   },
   {
     key: "viola-jones",
@@ -59,7 +59,7 @@ const MECHANISMS = [
     needsDeep: true,
     text: "Each detected face becomes an embedding vector. Recognition compares that vector against your enrolled reference gallery by cosine similarity.",
     detail:
-      "Faces are detected with RetinaFace, then embedded with FaceNet. An identity is claimed only when cosine similarity clears the threshold; anything below is reported as Unknown rather than guessed at.",
+      "Faces are detected, then embedded with FaceNet into a 128-dimensional vector. This is the same FaceNet graph DeepFace ships, converted to ONNX so it runs without TensorFlow — embeddings agree with the original to seven decimal places. An identity is claimed only when cosine similarity clears the threshold; anything below is reported as Unknown rather than guessed at.",
     strength: "Answers 'who is this?' not just 'where?'",
     limitation: "Needs enrolled reference images"
   }
@@ -139,7 +139,13 @@ function App() {
       const data = await response.json();
       setStatus(data);
       setStatusError(false);
-      setDetector((current) => current || data.detector_backend || "yunet");
+      setDetector((current) => {
+        const options = data.detector_backends ?? [];
+        const usable = (key) => options.some((o) => o.key === key && o.available !== false);
+        if (current && usable(current)) return current;
+        if (usable(data.detector_backend)) return data.detector_backend;
+        return options.find((o) => o.available !== false)?.key ?? "yunet";
+      });
       return data;
     } catch {
       setStatusError(true);
@@ -496,8 +502,13 @@ function App() {
                     aria-label="Deep detector backend"
                   >
                     {(status?.detector_backends ?? []).map((option) => (
-                      <option key={option.key} value={option.key}>
+                      <option
+                        key={option.key}
+                        value={option.key}
+                        disabled={option.available === false}
+                      >
                         {option.label} ({option.speed})
+                        {option.available === false ? " — not installed" : ""}
                       </option>
                     ))}
                   </select>
@@ -813,6 +824,8 @@ function DocsView({ status }) {
         <p>
           Uploaded images are held in memory for the duration of the request and are never written
           to disk. Only the images you place in the gallery folder persist.
+
+          Done by Tamilselvi R to demonstrate the capabilities of FaceVision Studio. The source code is available on GitHub. Done for an educational purpose and to showcase the features of FaceVision Studio.
         </p>
       </div>
     </section>

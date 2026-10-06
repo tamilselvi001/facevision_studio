@@ -83,22 +83,23 @@ TEMPLATE_MIN_SCORE = _env_float("TEMPLATE_MIN_SCORE", 0.60)
 # Deep-detector confidence floor.
 DETECTION_MIN_CONFIDENCE = _env_float("DETECTION_MIN_CONFIDENCE", 0.35)
 
-# Deep detector backends, fastest first. Measured on an 820x400 photo, warm:
-#   yunet       0.01 s    233 KB   OpenCV FaceDetectorYN
-#   ssd         0.03 s   10.7 MB   OpenCV DNN ResNet-10 SSD
-#   retinaface  14.6  s    118 MB   highest recall on hard poses
-# RetinaFace is the most capable but is far too slow to be the default on a
-# free-tier CPU container, so YuNet leads and the choice is exposed in the UI.
-DETECTOR_BACKENDS = ("yunet", "ssd", "retinaface")
+# Deep detector backends. Measured on an 820x400 photo, warm:
+#   yunet       0.015 s   228 KB  ONNX via OpenCV - ships with the image
+#   retinaface  14.6  s   118 MB  needs TensorFlow (~1 GB RAM); optional extra
+# RetinaFace has better recall on hard poses but cannot run on a free-tier
+# container, so YuNet is the default and RetinaFace is opt-in for local work.
+DETECTOR_BACKENDS = ("yunet", "retinaface")
 _requested_backend = _env_str("DETECTOR_BACKEND", "yunet").lower()
 DETECTOR_BACKEND = _requested_backend if _requested_backend in DETECTOR_BACKENDS else "yunet"
 
-# Weights pulled during the Docker build so the first request never downloads.
-# RetinaFace is included only when PREFETCH_RETINAFACE=1 (adds ~118 MB).
-PREFETCH_RETINAFACE = _env_bool("PREFETCH_RETINAFACE", False)
+# RetinaFace pulls in TensorFlow, so it is off unless explicitly enabled.
+ENABLE_RETINAFACE = _env_bool("ENABLE_RETINAFACE", False)
 
-# Set DEEP_MODELS_ENABLED=0 to run a classical-CV-only deployment that needs no
-# TensorFlow weights (Viola-Jones and template matching stay fully functional).
+# ONNX Runtime threads. 1 suits a shared/fractional vCPU; raise it on real cores.
+ONNX_THREADS = _env_int("ONNX_THREADS", 1)
+
+# Set DEEP_MODELS_ENABLED=0 for a classical-CV-only deployment that loads no
+# neural weights at all (Viola-Jones and template matching stay fully working).
 DEEP_MODELS_ENABLED = _env_bool("DEEP_MODELS_ENABLED", True)
 
 # Build FaceNet gallery embeddings in a background thread at startup so the

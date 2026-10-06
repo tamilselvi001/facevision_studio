@@ -1,18 +1,16 @@
+# Production runtime. No TensorFlow: the FaceNet graph runs on ONNX Runtime,
+# which is what keeps this inside a 512 MB free-tier container.
+
 # Web layer
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
 python-multipart==0.0.20
 
-# Imaging
-# DeepFace and retina-face both depend on `opencv-python` (not the headless
-# build), so the runtime image installs libgl1/libglib2.0-0 to match.
-opencv-python==4.12.0.88
+# Imaging. The headless build has no GUI dependencies, so the runtime image
+# needs no libgl1/libglib2.0-0 at all.
+opencv-python-headless==4.12.0.88
 numpy==2.2.6
 Pillow==11.3.0
 
-# Deep models.
-# Plain `tensorflow` is the CPU build; the NVIDIA CUDA wheels only arrive via
-# the `tensorflow[and-cuda]` extra, which this project never requests.
-tensorflow==2.20.0
-tf-keras==2.20.1
-deepface==0.0.95
+# Model runtime
+onnxruntime==1.30.0

@@ -1,17 +1,12 @@
-# Render blueprint.
+# Render blueprint — free tier, every feature enabled.
 #
-# IMPORTANT — read before deploying here.
-# Render's free web service caps memory at 512 MB. TensorFlow plus the FaceNet
-# weights need roughly 1 GB resident, so a free instance will be OOM-killed the
-# moment deep models load. This blueprint therefore ships the free tier in
-# classical-CV-only mode, which genuinely works: Viola-Jones detection and
-# multi-scale template matching stay fully functional.
+# The app runs FaceNet on ONNX Runtime instead of TensorFlow, so the whole
+# service peaks around 190 MB resident and fits Render's free 512 MB instance
+# with room to spare. No credit card is required for the free tier.
 #
-# To get RetinaFace/YuNet detection AND FaceNet recognition on Render, raise
-# `plan` to `standard` (2 GB) and set DEEP_MODELS_ENABLED=1 below.
-#
-# For all four features on free hosting, deploy to Hugging Face Spaces instead
-# (16 GB RAM, Docker, no card required). See DEPLOYMENT.md.
+# Free-tier behaviour: the service sleeps after 15 minutes with no traffic and
+# takes ~50 seconds to wake on the next request. 750 instance-hours per month
+# covers one service running continuously.
 
 services:
   - type: web
@@ -25,12 +20,19 @@ services:
     envVars:
       - key: PORT
         value: 10000
-      # Flip to 1 together with `plan: standard` for the full feature set.
       - key: DEEP_MODELS_ENABLED
-        value: 0
+        value: 1
       - key: DETECTOR_BACKEND
         value: yunet
+      # RetinaFace needs TensorFlow (~1 GB) and cannot run on the free plan.
+      - key: ENABLE_RETINAFACE
+        value: 0
       - key: WARM_UP_ON_STARTUP
+        value: 1
+      # Free instances get a fractional CPU; one ONNX thread avoids thrashing.
+      - key: ONNX_THREADS
+        value: 1
+      - key: OMP_NUM_THREADS
         value: 1
       - key: ALLOWED_ORIGINS
         value: "*"

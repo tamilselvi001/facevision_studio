@@ -1,0 +1,10 @@
+# OPTIONAL extras for the RetinaFace detector backend.
+#
+# Not installed in the deployed image: this pulls TensorFlow (~1 GB resident)
+# and RetinaFace takes ~14.5 s per image on CPU, so it cannot run on a free
+# tier. Install it locally if you want to compare RetinaFace against YuNet,
+# then start the server with ENABLE_RETINAFACE=1.
+-r requirements.txt
+tensorflow==2.20.0
+tf-keras==2.20.1
+deepface==0.0.95

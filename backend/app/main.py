@@ -31,8 +31,10 @@ from .vision import (
     face_embedding,
     fit_within,
     list_gallery,
+    model_report,
     nms,
     recognize_embedding,
+    retinaface_available,
     template_match,
     warm_up,
 )
@@ -50,18 +52,18 @@ METHODS = {
     "facenet": "Deep detector + FaceNet recognition",
 }
 
+RECOGNITION_MODEL = "FaceNet (128-d, ONNX)"
+
 DETECTOR_LABELS = {
-    "yunet": "YuNet",
-    "ssd": "SSD ResNet-10",
-    "retinaface": "RetinaFace",
+    "yunet": "YuNet (ONNX)",
+    "retinaface": "RetinaFace (TensorFlow)",
     "viola-jones": "Viola-Jones",
 }
 
 # Measured warm latency on an 820x400 photo; surfaced so the UI can warn before
-# a user picks the slow one.
+# anyone picks the slow one.
 DETECTOR_PROFILE = {
     "yunet": {"label": "YuNet", "speed": "fastest", "approx_ms": 15, "weights_mb": 0.23},
-    "ssd": {"label": "SSD ResNet-10", "speed": "fast", "approx_ms": 35, "weights_mb": 10.7},
     "retinaface": {"label": "RetinaFace", "speed": "slow", "approx_ms": 14500, "weights_mb": 118},
 }
 
@@ -151,6 +153,12 @@ def jpg_data_uri(image: np.ndarray, quality: int = 90) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buffer).decode("ascii")
 
 
+def _backend_available(key: str) -> bool:
+    if key == "retinaface":
+        return retinaface_available()
+    return True
+
+
 def filter_boxes(boxes, shape):
     """Clip, drop negligible detections, then suppress duplicates."""
     height, width = shape[:2]
@@ -186,13 +194,16 @@ def status():
         "deep_models_enabled": config.DEEP_MODELS_ENABLED,
         "deep_models_ready": deep_models_available() if config.DEEP_MODELS_ENABLED else False,
         "deep_models_error": deep_models_error(),
+        "recognition_model": RECOGNITION_MODEL,
         "warming_up": _warm_up_state["started"] and not _warm_up_state["done"],
         "gallery_people": list_gallery(),
         "methods": METHODS,
         "detector_backend": config.DETECTOR_BACKEND,
         "detector_backends": [
-            {"key": key, **DETECTOR_PROFILE[key]} for key in config.DETECTOR_BACKENDS
+            {"key": key, **DETECTOR_PROFILE[key], "available": _backend_available(key)}
+            for key in config.DETECTOR_BACKENDS
         ],
+        "models": model_report(),
         "limits": {
             "max_upload_mb": config.MAX_UPLOAD_BYTES // (1024 * 1024),
             "max_image_dim": config.MAX_IMAGE_DIM,
@@ -242,7 +253,7 @@ def _run_analysis(
         detector = (
             f"Viola-Jones ({requested} unavailable)"
             if fallback_used
-            else f"DeepFace / {DETECTOR_LABELS.get(used, used)}"
+            else DETECTOR_LABELS.get(used, used)
         )
 
     boxes = filter_boxes(boxes, frame.shape)

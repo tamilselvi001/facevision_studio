@@ -19,8 +19,14 @@ npm-debug.log*
 backend/gallery/.embeddings.json
 .deepface/
 *.h5
-*.onnx
 *.caffemodel
+
+# Downloaded/derived model weights are ignored by default, EXCEPT the two the
+# app ships with -- they must be committed so builds are reproducible and cold
+# starts never wait on a download.
+*.onnx
+!backend/models/facenet.onnx
+!backend/models/yunet.onnx
 
 # Environment
 .env

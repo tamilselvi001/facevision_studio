@@ -1,15 +1,3 @@
----
-title: FaceVision Studio
-emoji: 🎭
-colorFrom: green
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
-license: mit
-short_description: Face detection, template matching and FaceNet recognition
----
-
 # FaceVision Studio
 
 A computer-vision workbench that puts classical and modern face analysis side by
@@ -19,7 +7,7 @@ Four mechanisms, one image, one click:
 
 | Mode | Question it answers | Engine |
 |---|---|---|
-| **Deep Detection** | Where are the faces? | YuNet · SSD · RetinaFace (selectable) |
+| **Deep Detection** | Where are the faces? | YuNet (ONNX) · RetinaFace (optional) |
 | **Viola–Jones** | Where are the faces? (classically) | Haar cascade + eye validation |
 | **Template Matching** | Where does *this patch* occur? | Multi-scale normalised correlation |
 | **FaceNet** | *Who* is this? | FaceNet embeddings vs. an enrolled gallery |
@@ -65,19 +53,18 @@ npm run dev
 Open <http://localhost:5173>. Vite proxies `/api` to port 8000, so no API URL is
 ever hardcoded.
 
-> On Windows, prefix the backend command with `$env:PYTHONUTF8=1;` — DeepFace's
-> logger prints emoji that the default cp1252 console cannot encode.
-
 ---
 
 ## Deploying
 
-**Free hosting with every feature working: [Hugging Face Spaces](https://huggingface.co/new-space).**
-It is the only free tier with enough memory (16 GB) for TensorFlow and FaceNet.
-Render's free tier is 512 MB and will OOM-kill the deep models.
+**Free hosting with every feature working: [Render](https://render.com).**
+No credit card, 512 MB, Docker. The whole service peaks around 265 MB because
+FaceNet runs on ONNX Runtime rather than TensorFlow, so everything fits.
 
-Full instructions, including a GitHub Action that redeploys on every push, are
-in **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Full step-by-step instructions are in **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
+> Hugging Face Spaces is no longer an option: Docker and Gradio Spaces became
+> PRO-only in 2026. Only Static Spaces remain free, and this app needs a server.
 
 ---
 
@@ -85,17 +72,20 @@ in **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 Measured on the bundled 820×400 sample, warm:
 
-| Backend | Time/image | Weights | Faces found |
-|---|---|---|---|
-| `yunet` *(default)* | **~15 ms** | 233 KB | 2 |
-| `ssd` | ~35 ms | 10.7 MB | 2 |
-| `retinaface` | ~14.5 s | 118 MB | 2 |
+| Backend | Time/image | Weights | Needs TensorFlow | Faces found |
+|---|---|---|---|---|
+| `yunet` *(default)* | **~15 ms** | 228 KB | No | 2 |
+| `retinaface` | ~14.5 s | 118 MB | Yes (~1 GB RAM) | 2 |
 
-All three find the same faces here and yield the same identification.
-RetinaFace has better recall on hard poses and occlusion, so it remains
-selectable — but at roughly a thousand times the cost on CPU it is a poor
-default for a shared, free instance. Switch backends live from the UI, or pin
-one with `DETECTOR_BACKEND`.
+Both find the same faces here and yield the same identification. RetinaFace has
+better recall on hard poses and occlusion, so it stays available — but at
+roughly a thousand times the cost on CPU it cannot run on a free tier. It is an
+optional local extra:
+
+```bash
+pip install -r backend/requirements-retinaface.txt
+ENABLE_RETINAFACE=1 python -m uvicorn backend.app.main:app --port 8000
+```
 
 ---
 
@@ -182,9 +172,21 @@ drawing an arbitrary box — and it reports a **template match**, never a "face
 detected", because template matching is not a face detector.
 
 ### FaceNet recognition
-Each detected face is embedded into a FaceNet vector and compared by cosine
-similarity against every enrolled reference. The closest identity is returned
-with its score; below threshold the result is **Unknown**.
+Each detected face is embedded into a 128-dimensional FaceNet vector and
+compared by cosine similarity against every enrolled reference. The closest
+identity is returned with its score; below threshold the result is **Unknown**.
+
+This is the **same FaceNet graph DeepFace ships**, exported to ONNX and stored
+at float16 so it runs on ONNX Runtime with no TensorFlow. Embeddings were
+checked against the TensorFlow original on every bundled reference image:
+cosine agreement **0.9999977 or better**, i.e. identical to floating-point
+noise. The practical effect is that the model needs ~265 MB instead of ~1 GB
+and loads in 0.3 s instead of 20 s, which is what makes free hosting possible.
+
+Preprocessing is a faithful port of DeepFace's own and is load-bearing: the
+network is fed **BGR** pixels (DeepFace converts to RGB and back) with
+aspect-preserving zero padding rather than a stretch. Getting either wrong
+drops agreement to ~0.6.
 
 ---
 
@@ -222,15 +224,19 @@ written to disk. Only images you place in the gallery folder persist.
 backend/
   app/
     config.py      environment-driven settings
+    engines.py     ONNX model loading (FaceNet, YuNet); no TensorFlow
     main.py        FastAPI routes, static SPA serving
-    vision.py      detection, recognition, template matching
+    vision.py      geometry, classical CV, gallery
+  models/
+    facenet.onnx   FaceNet 128-d, float16 (~44 MB)
+    yunet.onnx     YuNet detector (~228 KB)
   gallery/         one folder per enrolled person
-  scripts/         model prefetch, smoke test
+  scripts/         model verification, smoke test
 frontend/
   src/main.jsx     the whole UI
   public/sample/   bundled demo images
 Dockerfile         node build stage -> python runtime
-render.yaml        Render blueprint
+render.yaml        Render blueprint (free tier)
 ```
 
 ## License
