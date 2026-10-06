@@ -151,17 +151,11 @@ function App() {
     loadStatus();
   }, [loadStatus]);
 
-  // Models load in the background on a cold start; poll until they are ready.
+  // Poll fast while models load on a cold start, then settle into a slow
+  // heartbeat so the status pill still notices if the backend goes away.
   useEffect(() => {
-    const warming = status?.warming_up;
-    if (!warming) {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-      return undefined;
-    }
-    pollRef.current = setInterval(loadStatus, 4000);
+    const interval = status?.warming_up ? 4000 : 30000;
+    pollRef.current = setInterval(loadStatus, interval);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = null;
@@ -240,12 +234,20 @@ function App() {
       setResult(payload);
       loadStatus();
     } catch (e) {
-      const offline = statusError || !status;
-      setError(
-        offline
-          ? `${e.message} The API did not respond — if you are running locally, start the FastAPI server first.`
-          : e.message
-      );
+      // A fetch that never reached the server throws TypeError, not an HTTP
+      // error. That means the backend died or was never started, which is not
+      // a fault of the selected method — say so explicitly instead of
+      // surfacing a bare "Failed to fetch".
+      const networkDown =
+        e instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(e.message);
+      if (networkDown) {
+        setError(
+          "Could not reach the API — the request never left the browser. The backend is not running or has stopped. Start it with: python -m uvicorn backend.app.main:app --port 8000"
+        );
+        loadStatus();
+      } else {
+        setError(e.message);
+      }
     } finally {
       setBusy(false);
     }
