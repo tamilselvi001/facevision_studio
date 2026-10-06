@@ -66,9 +66,6 @@ FaceNet runs on ONNX Runtime rather than TensorFlow, so everything fits.
 
 Full step-by-step instructions are in **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
-> Hugging Face Spaces is no longer an option: Docker and Gradio Spaces became
-> PRO-only in 2026. Only Static Spaces remain free, and this app needs a server.
-
 ---
 
 ## Choosing a detector
