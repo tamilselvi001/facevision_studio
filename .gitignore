@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/dist/
+backend/static/
+.npm/
+npm-debug.log*
+
+# Generated model + embedding caches (rebuilt automatically)
+backend/gallery/.embeddings.json
+.deepface/
+*.h5
+*.onnx
+*.caffemodel
+
+# Environment
+.env
+.env.local
+*.local
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

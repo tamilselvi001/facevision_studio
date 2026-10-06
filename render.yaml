@@ -1,0 +1,40 @@
+# Render blueprint.
+#
+# IMPORTANT — read before deploying here.
+# Render's free web service caps memory at 512 MB. TensorFlow plus the FaceNet
+# weights need roughly 1 GB resident, so a free instance will be OOM-killed the
+# moment deep models load. This blueprint therefore ships the free tier in
+# classical-CV-only mode, which genuinely works: Viola-Jones detection and
+# multi-scale template matching stay fully functional.
+#
+# To get RetinaFace/YuNet detection AND FaceNet recognition on Render, raise
+# `plan` to `standard` (2 GB) and set DEEP_MODELS_ENABLED=1 below.
+#
+# For all four features on free hosting, deploy to Hugging Face Spaces instead
+# (16 GB RAM, Docker, no card required). See DEPLOYMENT.md.
+
+services:
+  - type: web
+    name: facevision-studio
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 10000
+      # Flip to 1 together with `plan: standard` for the full feature set.
+      - key: DEEP_MODELS_ENABLED
+        value: 0
+      - key: DETECTOR_BACKEND
+        value: yunet
+      - key: WARM_UP_ON_STARTUP
+        value: 1
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: MAX_UPLOAD_MB
+        value: 12
+      - key: LOG_LEVEL
+        value: INFO

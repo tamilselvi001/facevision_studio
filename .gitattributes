@@ -1,0 +1,16 @@
+# Normalise to LF in the repository so files copied into a Linux container
+# (shell scripts especially) are not broken by CRLF line endings.
+* text=auto eol=lf
+
+*.sh      text eol=lf
+Dockerfile text eol=lf
+*.ps1     text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.svg text
+*.ico binary
+*.h5 binary
+*.onnx binary

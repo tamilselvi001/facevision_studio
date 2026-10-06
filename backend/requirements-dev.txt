@@ -1,0 +1,3 @@
+# Test-only extras. Not installed in the production image.
+-r requirements.txt
+httpx==0.28.1
