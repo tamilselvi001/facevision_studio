@@ -3,6 +3,9 @@
 A computer-vision workbench that puts classical and modern face analysis side by
 side, so you can see not just *what* each method answers but *where it breaks*.
 
+WEB SERVICE AVAILABLE ON : https://facevision-studio.onrender.com
+may not have some models for its free deployment limitations!
+
 Four mechanisms, one image, one click:
 
 | Mode | Question it answers | Engine |
